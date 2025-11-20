@@ -56,9 +56,9 @@ class AITradingWorkflow:
             if file_config:
                 print(f"[配置] 从配置文件 {config_file} 加载配置")
                 # 忽略不再使用的配置项
-                if 'correlation_analysis' in file_config:
-                    print("[配置] 注意: correlation_analysis配置项已不再使用")
-                    file_config.pop('correlation_analysis')
+                # if 'correlation_analysis' in file_config:
+                #     print("[配置] 注意: correlation_analysis配置项已不再使用")
+                #     file_config.pop('correlation_analysis')
                 self.config.update(file_config)
         
         # 2. 从传入的字典更新配置（优先级高于文件配置）

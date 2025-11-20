@@ -6,7 +6,6 @@
     "commission_rate": 0.001,
     "max_optimization_rounds": 3,
     "use_reasoning": true,
-    "correlation_analysis": true,
     "output_dir": "output_custom",
     "run_all_steps": true,
     "steps_to_run": ["load_data", "analyze_data", "generate_initial_strategy", "run_optimization_cycle"],
