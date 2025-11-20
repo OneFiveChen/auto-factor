@@ -1,0 +1,30 @@
+# Python编译文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境
+venv/
+env/
+*.env
+
+# 所有输出目录
+output*/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log
+
+# IDE配置
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 其他临时文件
+*.tmp
+*.temp
+.cache/
