@@ -34,7 +34,7 @@ def example_2_direct_api_key():
     try:
         # 注意：在实际应用中，不要硬编码API密钥
         # 这里仅作为示例
-        api_key = "sk-9e55f0036ce14232a796f63b71245d76"  # 从api_key.json获取的示例密钥
+        api_key = "xxxxxxxxxx"  # 从api_key.json获取的示例密钥
         client = DeepSeekClient(api_key=api_key)
         print("✓ 客户端初始化成功 (直接传入API密钥)")
         
