@@ -8,6 +8,8 @@ venv/
 env/
 *.env
 
+config/api_key.json
+
 # 所有输出目录
 output*/
 

@@ -1,0 +1,19 @@
+{
+    "data_files": ["BINANCE_BTCUSDT_1D.csv"],
+    "data_descriptions": ["比特币日线K线数据"],
+    "data_directory": "data",
+    "initial_capital": 10000.0,
+    "commission_rate": 0.001,
+    "max_optimization_rounds": 3,
+    "use_reasoning": true,
+    "correlation_analysis": true,
+    "output_dir": "output_custom",
+    "run_all_steps": true,
+    "steps_to_run": ["load_data", "analyze_data", "generate_initial_strategy", "run_optimization_cycle"],
+    "continue_on_failure": false,
+    "strategy_parameters": {
+        "lookback_period": 20,
+        "volatility_threshold": 0.02,
+        "risk_factor": 0.1
+    }
+}
