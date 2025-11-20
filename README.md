@@ -1,6 +1,4 @@
-# AITrade - AI驱动的量化交易系统
 
-AITrade是一个基于AI的量化交易系统，专注于使用大模型自动生成、优化和回测交易策略。系统支持多数据源导入和策略优化迭代，为量化交易提供完整的AI辅助工作流。
 
 ## 项目结构
 
@@ -80,7 +78,7 @@ python ai_trading_workflow.py --config example_config.json
     "steps_to_run": ["load_data", "analyze_data", "generate_initial_strategy", "run_optimization_cycle"]
 }
 ```
-```
+
 
 ## 主要功能
 
