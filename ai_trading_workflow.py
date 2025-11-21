@@ -33,8 +33,10 @@ class AITradingWorkflow:
         """
         # 默认配置
         default_config = {
-            'data_files': ['BINANCE_BTCUSDT_1D.csv'],  # 默认数据文件列表
-            'data_descriptions': ['比特币日线数据'],  # 数据描述列表
+            'main_data_file': 'BINANCE_BTCUSDT_1D.csv',  # 主回测数据文件
+            'main_data_description': '比特币日线数据',  # 主数据描述
+            'additional_data_files': [],  # 额外数据文件列表
+            'additional_data_descriptions': [],  # 额外数据描述列表
             'initial_capital': 10000.0,  # 初始资金
             'commission_rate': 0.001,  # 佣金率
             'max_optimization_rounds': 3,  # 最大优化轮数
@@ -43,8 +45,7 @@ class AITradingWorkflow:
             'output_dir': f'output_{datetime.now().strftime("%Y%m%d_%H%M%S")}',  # 自动生成带时间戳的输出目录
             'data_directory': '',  # 数据文件目录
             'run_all_steps': True,  # 是否运行所有步骤
-            'steps_to_run': ['load_data', 'analyze_data', 'generate_initial_strategy', 'run_optimization_cycle'],  # 要运行的步骤列表
-            'strategy_parameters': {}  # 策略参数，可用于指导AI生成策略
+            'steps_to_run': ['load_data', 'analyze_data', 'generate_initial_strategy', 'run_optimization_cycle']  # 要运行的步骤列表
         }
         
         # 合并配置
@@ -66,10 +67,7 @@ class AITradingWorkflow:
             print("[配置] 从传入的配置字典更新配置")
             self.config.update(config)
         
-        # 3. 处理向后兼容性
-        if 'data_file' in self.config and 'data_files' not in config:
-            self.config['data_files'] = [self.config['data_file']]
-            self.config['data_descriptions'] = [self.config.get('data_description', '未命名数据')]
+        # 不再需要处理旧配置的向后兼容性
         
         # 4. 加载API密钥
         self._load_api_key()
@@ -179,19 +177,13 @@ class AITradingWorkflow:
         """
         验证配置的有效性
         """
-        # 验证数据文件列表
-        if 'data_files' not in self.config or not self.config['data_files']:
-            self._log("警告: 未指定数据文件，使用默认文件")
-            self.config['data_files'] = ['BINANCE_BTCUSDT_1D.csv']
-            self.config['data_descriptions'] = ['比特币日线数据']
-        
-        # 确保数据描述与数据文件数量一致
-        if len(self.config['data_files']) != len(self.config.get('data_descriptions', [])):
-            self._log("警告: 数据描述数量与数据文件数量不一致，自动补充描述")
-            descriptions = self.config.get('data_descriptions', [])
-            while len(descriptions) < len(self.config['data_files']):
-                descriptions.append(f"数据集_{len(descriptions) + 1}")
-            self.config['data_descriptions'] = descriptions[:len(self.config['data_files'])]
+        # 确保额外数据描述与额外数据文件数量一致
+        if len(self.config.get('additional_data_files', [])) != len(self.config.get('additional_data_descriptions', [])):
+            self._log("警告: 额外数据描述数量与额外数据文件数量不一致，自动补充描述")
+            descriptions = self.config.get('additional_data_descriptions', [])
+            while len(descriptions) < len(self.config.get('additional_data_files', [])):
+                descriptions.append(f"额外数据集_{len(descriptions) + 1}")
+            self.config['additional_data_descriptions'] = descriptions[:len(self.config.get('additional_data_files', []))]
     
     def _normalize_config(self):
         """
@@ -211,50 +203,76 @@ class AITradingWorkflow:
     
     def load_data(self) -> bool:
         """
-        加载和准备数据，支持多数据集
+        加载和准备数据，支持主数据集和额外数据集
         
         Returns:
             bool: 是否成功
         """
         try:
-            data_files = self.config['data_files']
-            data_descriptions = self.config['data_descriptions']
+            # 加载主回测数据集
+            main_data_file = self.config['main_data_file']
+            main_data_description = self.config['main_data_description']
             
-            self._log(f"开始加载 {len(data_files)} 个数据文件")
+            self._log(f"开始加载主回测数据集: {main_data_file} ({main_data_description})")
             
-            # 确保描述列表与文件列表长度一致
-            if len(data_descriptions) < len(data_files):
-                # 用文件名填充缺少的描述
-                for i in range(len(data_descriptions), len(data_files)):
-                    data_descriptions.append(f"数据集 {i+1}")
-                self.config['data_descriptions'] = data_descriptions
+            # 读取主数据集
+            df = self.reader.read_csv_file(main_data_file)
             
-            # 读取所有数据集
-            for i, (data_file, data_desc) in enumerate(zip(data_files, data_descriptions)):
-                self._log(f"加载数据文件 {i+1}/{len(data_files)}: {data_file} ({data_desc})")
-                
-                # 读取数据
-                df = self.reader.read_csv_file(data_file)
-                
-                # 准备数据
-                df = self.reader.prepare_data(df)
-                
-                # 存储数据集
-                symbol = data_file.split('.')[0].strip()  # 提取股票/加密货币代码
-                self.data_sets[symbol] = {
-                    'data': df,
-                    'file': data_file,
-                    'description': data_desc
-                }
-                
-                self._log(f"  - 加载完成，共 {len(df)} 条记录")
-                self._log(f"  - 数据时间范围: {df.index[0]} 到 {df.index[-1]}")
+            # 准备数据
+            df = self.reader.prepare_data(df)
             
-            # 设置默认回测数据集（使用第一个数据集）
-            first_symbol = list(self.data_sets.keys())[0]
-            self.data = self.data_sets[first_symbol]['data']
-            self.config['data_file'] = self.data_sets[first_symbol]['file']
-            self.config['data_description'] = self.data_sets[first_symbol]['description']
+            # 存储主数据集
+            main_symbol = main_data_file.split('.')[0].strip()  # 提取股票/加密货币代码
+            self.data_sets[main_symbol] = {
+                'data': df,
+                'file': main_data_file,
+                'description': main_data_description
+            }
+            
+            self._log(f"  - 主数据集加载完成，共 {len(df)} 条记录")
+            self._log(f"  - 数据时间范围: {df.index[0]} 到 {df.index[-1]}")
+            
+            # 设置回测数据集为主数据集
+            self.data = df
+            
+            # 加载额外数据集
+            additional_data_files = self.config.get('additional_data_files', [])
+            additional_data_descriptions = self.config.get('additional_data_descriptions', [])
+            
+            if additional_data_files:
+                self._log(f"开始加载 {len(additional_data_files)} 个额外数据集")
+                
+                # 确保描述列表与文件列表长度一致
+                if len(additional_data_descriptions) < len(additional_data_files):
+                    # 用文件名填充缺少的描述
+                    for i in range(len(additional_data_descriptions), len(additional_data_files)):
+                        additional_data_descriptions.append(f"额外数据集 {i+1}")
+                    self.config['additional_data_descriptions'] = additional_data_descriptions
+                
+                # 读取所有额外数据集
+                for i, (data_file, data_desc) in enumerate(zip(additional_data_files, additional_data_descriptions)):
+                    self._log(f"加载额外数据文件 {i+1}/{len(additional_data_files)}: {data_file} ({data_desc})")
+                    
+                    # 读取数据
+                    df = self.reader.read_csv_file(data_file)
+                    
+                    # 准备数据
+                    df = self.reader.prepare_data(df)
+                    
+                    # 存储额外数据集
+                    symbol = data_file.split('.')[0].strip()  # 提取股票/加密货币代码
+                    # 避免与主数据集冲突
+                    if symbol in self.data_sets:
+                        symbol = f"{symbol}_additional_{i}"
+                    
+                    self.data_sets[symbol] = {
+                        'data': df,
+                        'file': data_file,
+                        'description': data_desc
+                    }
+                    
+                    self._log(f"  - 加载完成，共 {len(df)} 条记录")
+                    self._log(f"  - 数据时间范围: {df.index[0]} 到 {df.index[-1]}")
             
             # 保存数据摘要
             self._save_data_summaries()
@@ -304,7 +322,7 @@ class AITradingWorkflow:
             self._log("开始使用AI分析默认数据集...")
             self.analysis_result = self.generator.analyze_data(
                 self.data,
-                self.config['data_description']
+                self.config['main_data_description']
             )
             
             # 保存单一数据集分析结果
@@ -410,7 +428,7 @@ class AITradingWorkflow:
             
             self.current_strategy_code, self.current_strategy_description = self.generator.generate_strategy(
                 self.data,
-                self.config['data_description'],
+                self.config['main_data_description'],
                 analysis_result + path_hint + multi_data_info
             )
             
@@ -518,7 +536,7 @@ class GeneratedStrategy(Strategy):
             code_to_use = re.sub(r'from\s+src.core.backtester\s+import\s+Strategy[\s\S]*?(?=class|#|$)', '', code_to_use, flags=re.DOTALL)
             
             # 添加正确的导入语句到代码开头
-            import_lines = f"import sys\nimport os\n# 添加项目根目录和src目录到Python路径\nsys.path.append('{current_dir}')\nsys.path.append(os.path.join('{current_dir}', 'src'))\n\n# 正确导入Strategy类\nfrom src.core.backtester import Strategy\n\n"
+            import_lines = f"import sys\nimport os\nimport numpy as np\nimport pandas as pd\n# 添加项目根目录和src目录到Python路径\nsys.path.append('{current_dir}')\nsys.path.append(os.path.join('{current_dir}', 'src'))\n\n# 正确导入Strategy类\nfrom src.core.backtester import Strategy\n\n"
             code_to_use = import_lines + code_to_use
             self._log("已为策略代码添加正确的导入语句")
             
@@ -653,7 +671,7 @@ class GeneratedStrategy(Strategy):
                 strategy_code=backtest_result['strategy_code'],
                 strategy_description=self.current_strategy_description,
                 backtest_results=backtest_result['summary'] + path_hint,
-                data_description=self.config['data_description']
+                data_description=self.config['main_data_description']
             )
             
             # 验证优化后的策略代码
@@ -784,8 +802,8 @@ class GeneratedStrategy(Strategy):
                 
                 # 数据信息
                 f.write("## 数据信息\n")
-                f.write(f"- 数据文件: {self.config['data_file']}\n")
-                f.write(f"- 数据描述: {self.config['data_description']}\n")
+                f.write(f"- 主数据文件: {self.config.get('main_data_file', '未知')}\n")
+                f.write(f"- 主数据描述: {self.config.get('main_data_description', '未知')}\n")
                 if self.data is not None:
                     f.write(f"- 数据量: {len(self.data)} 条记录\n")
                     f.write(f"- 时间范围: {self.data.index[0]} 到 {self.data.index[-1]}\n\n")
@@ -860,7 +878,7 @@ class GeneratedStrategy(Strategy):
             self._log("🚀 开始运行AI交易策略工作流...")
             
             # 打印配置摘要
-            self._log(f"配置摘要: 数据文件={len(self.config['data_files'])}个, 优化轮数={self.config['max_optimization_rounds']}")
+            self._log(f"配置摘要: 主数据文件={self.config.get('main_data_file', '未知')}, 额外数据文件={len(self.config.get('additional_data_files', []))}个, 优化轮数={self.config['max_optimization_rounds']}")
             
             # 定义工作流步骤映射
             workflow_steps = {
@@ -974,13 +992,13 @@ def main():
         print("\nℹ️  未指定配置文件，使用默认配置")
         print("   您可以通过 --config 参数指定配置文件路径")
         print("   例如: python ai_trading_workflow.py --config my_config.json")
-        print(f"\n📊 数据文件: {', '.join(workflow.config['data_files'])}")
+        print(f"\n📊 数据文件: {workflow.config['main_data_file']}")
         print(f"💰 初始资金: {workflow.config['initial_capital']}")
         print(f"🔄 优化轮数: {workflow.config['max_optimization_rounds']}")
         print(f"📁 输出目录: {workflow.output_dir}")
     else:
         print(f"\n📄 使用配置文件: {config_file}")
-        print(f"📊 数据文件: {', '.join(workflow.config['data_files'])}")
+        print(f"📊 数据文件: {workflow.config['main_data_file']}")
         print(f"📁 输出目录: {workflow.output_dir}")
     
     # 运行工作流

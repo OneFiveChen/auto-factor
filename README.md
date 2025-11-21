@@ -66,8 +66,10 @@ python ai_trading_workflow.py --config example_config.json
 
 ```json
 {
-    "data_files": ["BINANCE_BTCUSDT_1D.csv"],
-    "data_descriptions": ["比特币日线K线数据"],
+    "main_data_file": "BINANCE_BTCUSDT_1D.csv",
+  "main_data_description": "比特币日线K线数据",
+  "additional_data_files": [],
+  "additional_data_descriptions": [],
     "data_directory": "data",
     "initial_capital": 10000.0,
     "commission_rate": 0.001,

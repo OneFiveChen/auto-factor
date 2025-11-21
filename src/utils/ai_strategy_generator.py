@@ -131,8 +131,8 @@ class AIStrategyGenerator:
         print(f"[DEBUG] 转义后的数据描述: {escaped_data_desc}")
         escaped_data_summary = data_summary.replace('{', '{{').replace('}', '}}')
         print(f"[DEBUG] 转义后的数据摘要: {escaped_data_summary}")
-        escaped_sample_data = sample_data.replace('{', '{{').replace('}', '}}')
-        print(f"[DEBUG] 转义后的样本数据: {escaped_sample_data[:100]}...")  # 只打印前100个字符
+        # escaped_sample_data = sample_data.replace('{', '{{').replace('}', '}}')
+        # print(f"[DEBUG] 转义后的样本数据: {escaped_sample_data[:100]}...")  # 只打印前100个字符
         escaped_analysis_result = analysis_result.replace('{', '{{').replace('}', '}}')
         print(f"[DEBUG] 转义后的分析结果: {escaped_analysis_result[:100]}...")  # 只打印前100个字符
         
@@ -146,8 +146,7 @@ class AIStrategyGenerator:
 ## 数据统计摘要
 {data_sum}
 
-## 数据样本（前10行）
-{sample}
+## 数据样本请参考之前给你发送的数据
 
 ## 数据分析结果
 {analysis}
@@ -215,7 +214,7 @@ class GeneratedStrategy(Strategy):
 """.format(
             data_desc=escaped_data_desc,
             data_sum=escaped_data_summary,
-            sample=escaped_sample_data,
+            # sample=escaped_sample_data,
             analysis=escaped_analysis_result
         )
         
