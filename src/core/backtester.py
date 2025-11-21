@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 from datetime import datetime
-import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Optional, Callable
 
 class Strategy:

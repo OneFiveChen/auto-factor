@@ -41,7 +41,7 @@ AITradingWorkflow类是整个系统的核心，整合了数据读取、策略生
 2. 安装必要的依赖：
 
 ```bash
-pip install pandas numpy matplotlib
+pip install pandas numpy
 ```
 
 3. 配置API密钥：在`config/api_key.json`文件中添加您的DeepSeek API密钥：
@@ -67,9 +67,9 @@ python ai_trading_workflow.py --config example_config.json
 ```json
 {
     "main_data_file": "BINANCE_BTCUSDT_1D.csv",
-  "main_data_description": "比特币日线K线数据",
-  "additional_data_files": [],
-  "additional_data_descriptions": [],
+    "main_data_description": "比特币日线K线数据",
+    "additional_data_files": [],
+    "additional_data_descriptions": [],
     "data_directory": "data",
     "initial_capital": 10000.0,
     "commission_rate": 0.001,
