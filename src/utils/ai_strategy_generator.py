@@ -3,22 +3,35 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple, Any
 from src.utils.deepseek_client import DeepSeekClient
+from src.utils.data_sampler import DataSampler
+from src.utils.logger import Logger, log, info, warning, error, debug, critical, set_global_log_file
 
 class AIStrategyGenerator:
     """
     AI策略生成器，用于与DeepSeek API交互，分析数据并生成交易策略代码
     """
     
-    def __init__(self, api_key: Optional[str] = None, use_reasoning: bool = True):
+    def __init__(self, api_key: Optional[str] = None, use_reasoning: bool = True,
+                 use_volatility_sampling: bool = True, target_samples: int = 30,
+                 sampling_strategy: str = 'volatility', volatility_window: int = 20):
         """
         初始化AI策略生成器
         
         Args:
             api_key: DeepSeek API密钥
             use_reasoning: 是否使用思考模式
+            use_volatility_sampling: 是否使用基于波动率的采样
+            target_samples: 目标采样点数
+            sampling_strategy: 采样策略
+            volatility_window: 波动率计算窗口
         """
         self.client = DeepSeekClient(api_key=api_key, use_reasoning=use_reasoning)
         self.use_reasoning = use_reasoning
+        self.use_volatility_sampling = use_volatility_sampling
+        self.target_samples = target_samples
+        self.sampling_strategy = sampling_strategy
+        self.volatility_window = volatility_window
+        self.sampler = DataSampler(config={'volatility_window': volatility_window})
     
     def send_prompt(self, prompt: str) -> str:
         """
@@ -46,19 +59,59 @@ class AIStrategyGenerator:
         
         return response
     
-    def analyze_data(self, data: pd.DataFrame, data_description: str = "") -> str:
+    def analyze_data(self, data: pd.DataFrame, data_description: str = "",
+                    use_volatility_sampling: Optional[bool] = None,
+                    target_samples: Optional[int] = None,
+                    sampling_strategy: str = "volatility") -> str:
         """
         让AI分析数据，理解市场特性和潜在的交易机会
         
         Args:
             data: 要分析的K线数据
             data_description: 数据的额外描述信息（如资产名称、时间周期等）
+            use_volatility_sampling: 是否使用基于波动率的采样（覆盖实例配置）
+            target_samples: 目标采样点数（覆盖实例配置）
+            sampling_strategy: 采样策略，可选值：'volatility'(基于波动率), 'uniform'(均匀采样), 'head'(取前N个)
             
         Returns:
             str: AI的数据分析结果
         """
+        info("=== 开始数据分析 ===")
+        info(f"原始数据总行数: {len(data)}")
+        
+        # 确定是否使用波动率采样
+        if use_volatility_sampling is None:
+            use_volatility_sampling = self.use_volatility_sampling
+            
+        info(f"是否使用波动率采样: {use_volatility_sampling}")
+        
+        # 确定目标采样数
+        if target_samples is None:
+            target_samples = self.target_samples
+        
+        info(f"目标采样数: {target_samples}")
+        info(f"采样策略: {sampling_strategy}")
+        
         # 准备数据样本
-        sample_data = data.head(20).to_string()
+        info("开始数据采样...")
+        if use_volatility_sampling and sampling_strategy == "volatility":
+            # 使用基于波动率的采样
+            sample_df = self.sampler.sample_by_volatility(data, target_samples)
+            sampling_info = f"基于波动率的采样（{len(sample_df)}行数据）"
+        elif use_volatility_sampling:
+            # 使用指定的采样策略
+            sample_df = self.sampler.sample_with_strategy(data, sampling_strategy, target_samples)
+            sampling_info = f"使用{sampling_strategy}策略采样（{len(sample_df)}行数据）"
+        else:
+            # 使用默认的head方式
+            sample_df = data.head(target_samples)
+            sampling_info = f"使用前{len(sample_df)}行数据"
+        
+        info(f"采样完成！采样数据量: {len(sample_df)}行")
+        info(f"采样时间范围: {sample_df.index[0]} 到 {sample_df.index[-1]}")
+        info("=== 开始准备AI分析 ===")
+        
+        sample_data = sample_df.to_string()
         data_summary = self._get_data_summary(data)
         
         # 构建提示词，使用format方法避免f-string空表达式问题
@@ -72,7 +125,7 @@ class AIStrategyGenerator:
 ## 数据统计摘要
 {}
 
-## 数据样本（前20行）
+## 数据样本（{}）
 {}
 
 ## 任务要求
@@ -84,7 +137,7 @@ class AIStrategyGenerator:
 5. 有哪些风险因素需要注意？
 
 请提供详细、专业且有深度的分析，帮助后续的策略开发。
-""".format(data_desc_text, data_summary, sample_data)
+""".format(data_desc_text, data_summary, sampling_info, sample_data)
         
         # 系统提示词
         system_prompt = """
@@ -104,7 +157,10 @@ class AIStrategyGenerator:
         return response
     
     def generate_strategy(self, data: pd.DataFrame, data_description: str = "", 
-                         analysis_result: Optional[str] = None) -> Tuple[str, str]:
+                         analysis_result: Optional[str] = None,
+                         use_volatility_sampling: Optional[bool] = None,
+                         target_samples: Optional[int] = None,
+                         sampling_strategy: str = "volatility") -> Tuple[str, str]:
         """
         生成交易策略代码
         
@@ -112,30 +168,52 @@ class AIStrategyGenerator:
             data: K线数据
             data_description: 数据描述
             analysis_result: 可选的数据分析结果
+            use_volatility_sampling: 是否使用基于波动率的采样（覆盖实例配置）
+            target_samples: 目标采样点数（覆盖实例配置）
+            sampling_strategy: 采样策略，可选值：'volatility'(基于波动率), 'uniform'(均匀采样), 'head'(取前N个)
             
         Returns:
             Tuple[str, str]: (策略代码, 策略说明)
         """
         # 如果没有提供分析结果，则先执行分析
         if not analysis_result:
-            analysis_result = self.analyze_data(data, data_description)
+            analysis_result = self.analyze_data(data, data_description, 
+                                              use_volatility_sampling=use_volatility_sampling,
+                                              target_samples=target_samples,
+                                              sampling_strategy=sampling_strategy)
+        
+        # 确定是否使用波动率采样
+        if use_volatility_sampling is None:
+            use_volatility_sampling = self.use_volatility_sampling
+            
+        # 确定目标采样数
+        if target_samples is None:
+            target_samples = self.target_samples
         
         # 准备数据样本和统计信息
-        sample_data = data.head(10).to_string()
+        if use_volatility_sampling:
+            # 使用基于波动率的采样
+            sample_df = self.sampler.sample_with_strategy(data, sampling_strategy, min(target_samples, 20))
+            sample_data = sample_df.to_string()
+        else:
+            # 使用默认的head方式
+            sample_data = data.head(10).to_string()
+        
         data_summary = self._get_data_summary(data)
         
         # 构建提示词，使用format方法避免f-string空表达式问题
         data_desc_text = data_description if data_description else "暂无数据描述"
         # 对所有参数进行花括号转义，避免被format方法错误解释
         escaped_data_desc = data_desc_text.replace('{', '{{').replace('}', '}}')
-        print(f"[DEBUG] 转义后的数据描述: {escaped_data_desc}")
+        debug(f"[DEBUG] 转义后的数据描述: {escaped_data_desc}")
         escaped_data_summary = data_summary.replace('{', '{{').replace('}', '}}')
-        print(f"[DEBUG] 转义后的数据摘要: {escaped_data_summary}")
+        debug(f"[DEBUG] 转义后的数据摘要: {escaped_data_summary}")
         # escaped_sample_data = sample_data.replace('{', '{{').replace('}', '}}')
         # print(f"[DEBUG] 转义后的样本数据: {escaped_sample_data[:100]}...")  # 只打印前100个字符
         escaped_analysis_result = analysis_result.replace('{', '{{').replace('}', '}}')
-        print(f"[DEBUG] 转义后的分析结果: {escaped_analysis_result[:100]}...")  # 只打印前100个字符
+        debug(f"[DEBUG] 转义后的分析结果: {escaped_analysis_result[:100]}...")  # 只打印前100个字符
         
+        info("=================初始化策略请求prompt，请观察================")
         # 构建提示词，使用命名参数避免位置参数错误
         prompt = """
 # 策略生成任务
@@ -172,7 +250,7 @@ class GeneratedStrategy(Strategy):
     def __init__(self, params=None):
         super().__init__(params)
         # 在这里设置默认参数
-        self.params = params or {}
+        self.params = params 
         # 请为策略指定一个有意义的名称
         self.name = "[策略名称]"
     
@@ -218,15 +296,15 @@ class GeneratedStrategy(Strategy):
             analysis=escaped_analysis_result
         )
         
-        print(f"[DEBUG] 生成的提示词长度: {len(prompt)} 字符")
-        print(f"[DEBUG] 提示词前100个字符: {prompt[:100]}...")
+        debug(f"[DEBUG] 生成的提示词长度: {len(prompt)} 字符")
+        debug(f"[DEBUG] 提示词前100个字符: {prompt}")
         # 系统提示词
         system_prompt = """
 你是一位专业的量化交易策略专家，精通Python编程和技术分析。
 请根据提供的数据和分析，设计一个合理、可实现且有潜力的交易策略。
 生成的代码必须严格遵循要求的格式，可以直接运行，并且策略逻辑必须清晰且有理论依据。
 """
-        
+        info("=================初始化策略请求，请观察================")
         # 调用API
         response = self.client.send_message(
             prompt=prompt,
@@ -234,8 +312,10 @@ class GeneratedStrategy(Strategy):
             use_reasoning=self.use_reasoning,
             stream=True
         )
+        info("=================初始化策略请求结束，请观察结果================")
         
         # 解析策略代码和说明
+        debug(f"[DEBUG] 大模型初始化策略策略响应: {response}")
         strategy_code, strategy_description = self._parse_strategy_response(response)
         
         return strategy_code, strategy_description
@@ -258,16 +338,16 @@ class GeneratedStrategy(Strategy):
         data_desc_text = data_description if data_description else "暂无数据描述"
         # 转义所有参数中的花括号，避免被format方法错误解释
         escaped_data_desc = data_desc_text.replace('{', '{{').replace('}', '}}')
-        print(f"[DEBUG] 优化策略 - 转义后的数据描述: {escaped_data_desc}")
+        debug(f"优化策略 - 转义后的数据描述: {escaped_data_desc}")
         
         escaped_strategy_desc = strategy_description.replace('{', '{{').replace('}', '}}')
-        print(f"[DEBUG] 优化策略 - 转义后的策略说明: {escaped_strategy_desc[:100]}...")
+        debug(f"优化策略 - 转义后的策略说明: {escaped_strategy_desc[:2000]}...")
         
         escaped_strategy_code = strategy_code.replace('{', '{{').replace('}', '}}')
-        print(f"[DEBUG] 优化策略 - 转义后的策略代码长度: {len(escaped_strategy_code)} 字符")
+        debug(f"优化策略 - 转义后的策略代码长度: {len(escaped_strategy_code)} 字符")
         
         escaped_backtest_results = backtest_results.replace('{', '{{').replace('}', '}}')
-        print(f"[DEBUG] 优化策略 - 转义后的回测结果: {escaped_backtest_results[:100]}...")
+        debug(f"优化策略 - 转义后的回测结果: {escaped_backtest_results[:2000]}...")
         
         # 构建提示词，使用命名参数避免位置参数错误
         prompt = """
@@ -316,8 +396,8 @@ class GeneratedStrategy(Strategy):
             backtest_results=escaped_backtest_results
         )
         
-        print(f"[DEBUG] 优化策略 - 生成的提示词长度: {len(prompt)} 字符")
-        print(f"[DEBUG] 优化策略 - 提示词前100个字符: {prompt[:100]}...")
+        debug(f"[DEBUG] 优化策略 - 生成的提示词长度: {len(prompt)} 字符")
+        debug(f"[DEBUG] 优化策略 - 提示词前100个字符: {prompt[:2000]}...")
         
         # 系统提示词
         system_prompt = """
@@ -479,15 +559,15 @@ class GeneratedStrategy(Strategy):
         try:
             # 检查是否包含必要的类和方法
             if 'class GeneratedStrategy' not in code:
-                print("错误: 策略代码必须包含名为GeneratedStrategy的类")
+                error("策略代码必须包含名为GeneratedStrategy的类")
                 return False
             
             if 'def initialize' not in code:
-                print("错误: 策略代码必须包含initialize方法")
+                error("策略代码必须包含initialize方法")
                 return False
             
             if 'def on_bar' not in code:
-                print("错误: 策略代码必须包含on_bar方法")
+                error("策略代码必须包含on_bar方法")
                 return False
             
             # 尝试编译代码，检查语法错误
@@ -495,7 +575,7 @@ class GeneratedStrategy(Strategy):
             
             return True
         except Exception as e:
-            print(f"策略代码验证失败: {e}")
+            error(f"策略代码验证失败: {e}")
             return False
     
     def save_strategy(self, code: str, description: str, filename: str = "generated_strategy.py"):
@@ -521,12 +601,12 @@ class GeneratedStrategy(Strategy):
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(header + code)
         
-        print(f"策略已保存到 {filename}")
+        info(f"策略已保存到 {filename}")
 
 # 示例用法
 if __name__ == "__main__":
-    print("AI策略生成器已创建，使用方法:")
-    print("""
+    info("AI策略生成器已创建，使用方法:")
+    info("""
     from data_reader import DataReader
     from ai_strategy_generator import AIStrategyGenerator
     

@@ -16,6 +16,7 @@ from src.core.data_reader import DataReader
 from src.core.backtester import Backtest, Strategy
 from src.core.backtest_analyzer import BacktestAnalyzer
 from src.utils.ai_strategy_generator import AIStrategyGenerator
+from src.utils.logger import Logger, log, info, warning, error, debug, critical, set_global_log_file
 
 class AITradingWorkflow:
     """
@@ -45,26 +46,37 @@ class AITradingWorkflow:
             'output_dir': f'output_{datetime.now().strftime("%Y%m%d_%H%M%S")}',  # 自动生成带时间戳的输出目录
             'data_directory': '',  # 数据文件目录
             'run_all_steps': True,  # 是否运行所有步骤
-            'steps_to_run': ['load_data', 'analyze_data', 'generate_initial_strategy', 'run_optimization_cycle']  # 要运行的步骤列表
+            'steps_to_run': ['load_data', 'analyze_data', 'generate_initial_strategy', 'run_optimization_cycle'],  # 要运行的步骤列表
+            # 波动率采样配置
+            'use_volatility_sampling': True,  # 是否使用波动率采样
+            'volatility_sampling_target_samples': 50,  # 目标采样数量
+            'volatility_sampling_strategy': 'dynamic',  # 采样策略: 'dynamic', 'importance', 'hybrid'
+            'volatility_window': 20,  # 波动率计算窗口大小
+            'volatility_threshold': 0.02  # 波动率阈值，用于重要性采样
         }
         
         # 合并配置
         self.config = default_config.copy()
         
+        # 确保输出目录存在
+        self.output_dir = self.config['output_dir']
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # 设置日志文件路径并初始化日志器
+        self.log_file = os.path.join(self.output_dir, f"workflow_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+        set_global_log_file(self.log_file)
+        
         # 1. 从配置文件加载配置（如果提供）
         if config_file:
             file_config = self._load_config_file(config_file)
             if file_config:
-                print(f"[配置] 从配置文件 {config_file} 加载配置")
+                info(f"[配置] 从配置文件 {config_file} 加载配置")
                 # 忽略不再使用的配置项
-                # if 'correlation_analysis' in file_config:
-                #     print("[配置] 注意: correlation_analysis配置项已不再使用")
-                #     file_config.pop('correlation_analysis')
                 self.config.update(file_config)
         
         # 2. 从传入的字典更新配置（优先级高于文件配置）
         if config:
-            print("[配置] 从传入的配置字典更新配置")
+            info("[配置] 从传入的配置字典更新配置")
             self.config.update(config)
         
         # 不再需要处理旧配置的向后兼容性
@@ -77,13 +89,6 @@ class AITradingWorkflow:
         
         # 6. 标准化配置项
         self._normalize_config()
-        
-        # 确保输出目录存在
-        self.output_dir = self.config['output_dir']
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-        # 设置日志文件路径
-        self.log_file = os.path.join(self.output_dir, f"workflow_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
         
         # 工作流状态
         self.data = None  # 单一数据集，用于回测
@@ -98,29 +103,15 @@ class AITradingWorkflow:
         self.reader = DataReader(data_dir=self.config.get('data_directory', ''))
         self.generator = AIStrategyGenerator(
             api_key=self.config['api_key'],
-            use_reasoning=self.config['use_reasoning']
+            use_reasoning=self.config['use_reasoning'],
+            use_volatility_sampling=self.config['use_volatility_sampling'],
+            target_samples=self.config['volatility_sampling_target_samples'],
+            sampling_strategy=self.config['volatility_sampling_strategy'],
+            volatility_window=self.config['volatility_window']
         )
         
         # 记录日志
-        self._log("工作流初始化完成")
-    
-    def _log(self, message: str):
-        """
-        记录日志
-        
-        Args:
-            message: 日志消息
-        """
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        log_message = f"[{timestamp}] {message}"
-        print(log_message)
-        # 写入日志文件
-        try:
-            with open(self.log_file, 'a', encoding='utf-8') as f:
-                f.write(log_message + '\n')
-        except Exception as e:
-            # 如果无法写入日志文件，只打印到控制台
-            print(f"无法写入日志文件: {e}")
+        info("工作流初始化完成")
     
     def _load_config_file(self, config_file: str) -> Optional[Dict]:
         """
@@ -140,7 +131,7 @@ class AITradingWorkflow:
             with open(config_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError) as e:
-            print(f"警告: 无法读取配置文件 {config_file}: {e}")
+            warning(f"无法读取配置文件 {config_file}: {e}")
             return None
     
     def _load_api_key(self):
@@ -171,7 +162,7 @@ class AITradingWorkflow:
                                                   key_config.get('deepseek') or \
                                                   key_config.get('api_key')
             except (FileNotFoundError, json.JSONDecodeError) as e:
-                self._log(f"警告: 无法读取API密钥文件: {e}")
+                warning(f"无法读取API密钥文件: {e}")
     
     def _validate_config(self):
         """
@@ -179,7 +170,7 @@ class AITradingWorkflow:
         """
         # 确保额外数据描述与额外数据文件数量一致
         if len(self.config.get('additional_data_files', [])) != len(self.config.get('additional_data_descriptions', [])):
-            self._log("警告: 额外数据描述数量与额外数据文件数量不一致，自动补充描述")
+            warning("额外数据描述数量与额外数据文件数量不一致，自动补充描述")
             descriptions = self.config.get('additional_data_descriptions', [])
             while len(descriptions) < len(self.config.get('additional_data_files', [])):
                 descriptions.append(f"额外数据集_{len(descriptions) + 1}")
@@ -213,7 +204,7 @@ class AITradingWorkflow:
             main_data_file = self.config['main_data_file']
             main_data_description = self.config['main_data_description']
             
-            self._log(f"开始加载主回测数据集: {main_data_file} ({main_data_description})")
+            info(f"开始加载主回测数据集: {main_data_file} ({main_data_description})")
             
             # 读取主数据集
             df = self.reader.read_csv_file(main_data_file)
@@ -229,8 +220,8 @@ class AITradingWorkflow:
                 'description': main_data_description
             }
             
-            self._log(f"  - 主数据集加载完成，共 {len(df)} 条记录")
-            self._log(f"  - 数据时间范围: {df.index[0]} 到 {df.index[-1]}")
+            info(f"  - 主数据集加载完成，共 {len(df)} 条记录")
+            info(f"  - 数据时间范围: {df.index[0]} 到 {df.index[-1]}")
             
             # 设置回测数据集为主数据集
             self.data = df
@@ -240,7 +231,7 @@ class AITradingWorkflow:
             additional_data_descriptions = self.config.get('additional_data_descriptions', [])
             
             if additional_data_files:
-                self._log(f"开始加载 {len(additional_data_files)} 个额外数据集")
+                info(f"开始加载 {len(additional_data_files)} 个额外数据集")
                 
                 # 确保描述列表与文件列表长度一致
                 if len(additional_data_descriptions) < len(additional_data_files):
@@ -251,7 +242,7 @@ class AITradingWorkflow:
                 
                 # 读取所有额外数据集
                 for i, (data_file, data_desc) in enumerate(zip(additional_data_files, additional_data_descriptions)):
-                    self._log(f"加载额外数据文件 {i+1}/{len(additional_data_files)}: {data_file} ({data_desc})")
+                    info(f"加载额外数据文件 {i+1}/{len(additional_data_files)}: {data_file} ({data_desc})")
                     
                     # 读取数据
                     df = self.reader.read_csv_file(data_file)
@@ -271,17 +262,17 @@ class AITradingWorkflow:
                         'description': data_desc
                     }
                     
-                    self._log(f"  - 加载完成，共 {len(df)} 条记录")
-                    self._log(f"  - 数据时间范围: {df.index[0]} 到 {df.index[-1]}")
+                    info(f"  - 加载完成，共 {len(df)} 条记录")
+                    info(f"  - 数据时间范围: {df.index[0]} 到 {df.index[-1]}")
             
             # 保存数据摘要
             self._save_data_summaries()
             
             return True
         except Exception as e:
-            self._log(f"数据加载失败: {e}")
+            error(f"数据加载失败: {e}")
             import traceback
-            self._log(f"错误详情: {traceback.format_exc()}")
+            error(f"错误详情: {traceback.format_exc()}")
             return False
             
     def _save_data_summaries(self):
@@ -304,7 +295,7 @@ class AITradingWorkflow:
                 f.write("\n" + data_summary + "\n\n")
                 f.write("-" * 50 + "\n\n")
         
-        self._log(f"数据摘要已保存到 {summary_file}")
+        info(f"数据摘要已保存到 {summary_file}")
     
     def analyze_data(self) -> bool:
         """
@@ -315,15 +306,32 @@ class AITradingWorkflow:
         """
         try:
             if not self.data_sets:
-                self._log("错误: 数据尚未加载")
+                error("错误: 数据尚未加载")
                 return False
             
             # 首先进行单一数据集分析（使用默认回测数据集）
-            self._log("开始使用AI分析默认数据集...")
-            self.analysis_result = self.generator.analyze_data(
-                self.data,
-                self.config['main_data_description']
-            )
+            info("=== AI交易工作流 - 数据分析阶段 ===")
+            info(f"配置信息:")
+            info(f"  - 是否使用波动率采样: {self.config.get('use_volatility_sampling', True)}")
+            info(f"  - 目标采样数量: {self.config.get('volatility_sampling_target_samples', 50)}")
+            info(f"  - 最小采样数量: {self.config.get('volatility_sampling_min_samples', 30)}")
+            info(f"  - 最大采样数量: {self.config.get('volatility_sampling_max_samples', 100)}")
+            info(f"  - 波动率计算窗口: {self.config.get('volatility_sampling_window', 14)}")
+            info(f"  - 采样策略: {self.config.get('sampling_strategy', 'volatility')}")
+            
+            info("\n开始使用AI分析默认数据集...")
+            try:
+                self.analysis_result = self.generator.analyze_data(
+                    self.data,
+                    self.config['main_data_description'],
+                    use_volatility_sampling=self.config.get('use_volatility_sampling', True),
+                    target_samples=self.config.get('volatility_sampling_target_samples', 50),
+                    sampling_strategy=self.config.get('sampling_strategy', 'volatility')
+                )
+                info("数据分析完成!")
+            except Exception as e:
+                error(f"数据分析过程中出错: {str(e)}")
+                raise
             
             # 保存单一数据集分析结果
             analysis_file = os.path.join(self.output_dir, 'data_analysis_result.txt')
@@ -347,7 +355,7 @@ class AITradingWorkflow:
             
             # 如果有多个数据集，创建多数据集信息汇总
             if len(self.data_sets) > 1:
-                self._log("生成多数据集信息汇总...")
+                info("生成多数据集信息汇总...")
                 multi_data_summary = self._generate_multi_data_summary()
                 
                 # 保存多数据集信息
@@ -356,12 +364,12 @@ class AITradingWorkflow:
                     f.write(f"多数据集信息汇总 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
                     f.write(multi_data_summary)
             
-            self._log("数据AI分析完成")
+            info("数据AI分析完成")
             return True
         except Exception as e:
-            self._log(f"数据分析失败: {e}")
+            error(f"数据分析失败: {e}")
             import traceback
-            self._log(f"错误详情: {traceback.format_exc()}")
+            error(f"错误详情: {traceback.format_exc()}")
             return False
     
     def _generate_multi_data_summary(self) -> str:
@@ -404,10 +412,10 @@ class AITradingWorkflow:
         """
         try:
             if self.data is None:
-                self._log("错误: 数据尚未加载")
+                error("错误: 数据尚未加载")
                 return False
             
-            self._log("开始生成初始交易策略...")
+            info("开始生成初始交易策略...")
             
             # 确保分析结果有效
             analysis_result = self.analysis_result if hasattr(self, 'analysis_result') and self.analysis_result else "暂无详细分析"
@@ -434,7 +442,7 @@ class AITradingWorkflow:
             
             # 验证策略代码
             if not self.generator.validate_strategy_code(self.current_strategy_code):
-                self._log("策略代码验证失败")
+                error("策略代码验证失败")
                 # 提供一个备用策略作为安全措施
                 self.current_strategy_code = self._get_fallback_strategy()
                 self.current_strategy_description = "备用基础策略"
@@ -447,10 +455,10 @@ class AITradingWorkflow:
                 strategy_file
             )
             
-            self._log("初始策略生成完成")
+            info("初始策略生成完成")
             return True
         except Exception as e:
-            self._log(f"策略生成失败: {e}")
+            error(f"策略生成失败: {e}")
             # 设置一个备用策略
             self.current_strategy_code = self._get_fallback_strategy()
             self.current_strategy_description = "备用基础策略"
@@ -514,16 +522,16 @@ class GeneratedStrategy(Strategy):
         """
         try:
             if self.data is None:
-                self._log("错误: 数据尚未加载")
+                error("错误: 数据尚未加载")
                 return None
             
             # 使用指定的策略代码或当前策略代码
             code_to_use = strategy_code or self.current_strategy_code
             if not code_to_use:
-                self._log("错误: 没有可用的策略代码")
+                error("错误: 没有可用的策略代码")
                 return None
             
-            self._log(f"开始回测策略 (轮数: {round_num})...")
+            info(f"开始回测策略 (轮数: {round_num})...")
             
             # 获取当前文件所在目录的绝对路径
             current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -538,7 +546,7 @@ class GeneratedStrategy(Strategy):
             # 添加正确的导入语句到代码开头
             import_lines = f"import sys\nimport os\nimport numpy as np\nimport pandas as pd\n# 添加项目根目录和src目录到Python路径\nsys.path.append('{current_dir}')\nsys.path.append(os.path.join('{current_dir}', 'src'))\n\n# 正确导入Strategy类\nfrom src.core.backtester import Strategy\n\n"
             code_to_use = import_lines + code_to_use
-            self._log("已为策略代码添加正确的导入语句")
+            info("已为策略代码添加正确的导入语句")
             
             # 使用临时文件加载策略类
             with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as temp_file:
@@ -563,8 +571,8 @@ class GeneratedStrategy(Strategy):
                 try:
                     spec.loader.exec_module(strategy_module)
                 except ImportError as e:
-                    self._log(f"导入错误: {e}")
-                    self._log(f"当前Python路径: {sys.path}")
+                    error(f"导入错误: {e}")
+                    error(f"当前Python路径: {sys.path}")
                     raise
                 
                 # 获取策略类
@@ -625,7 +633,7 @@ class GeneratedStrategy(Strategy):
                 
                 self.backtest_results.append(backtest_info)
                 
-                self._log(f"回测完成，收益率: {backtest_info['total_return']:.2%}, 夏普比率: {backtest_info['sharpe_ratio']:.2f}")
+                info(f"回测完成，收益率: {backtest_info['total_return']:.2%}, 夏普比率: {backtest_info['sharpe_ratio']:.2f}")
                 
                 # 返回回测摘要（用于AI优化）
                 return {
@@ -641,9 +649,9 @@ class GeneratedStrategy(Strategy):
                     os.unlink(temp_file_path)
                     
         except Exception as e:
-            self._log(f"回测失败: {e}")
+            error(f"回测失败: {e}")
             import traceback
-            self._log(f"错误详情: {traceback.format_exc()}")
+            error(f"错误详情: {traceback.format_exc()}")
             return None
     
     def optimize_strategy(self, backtest_result: Dict, round_num: int) -> Tuple[str, str]:
@@ -658,7 +666,7 @@ class GeneratedStrategy(Strategy):
             Tuple[str, str]: (优化后的策略代码, 优化分析)
         """
         try:
-            self._log(f"开始优化策略 (轮数: {round_num})...")
+            info(f"开始优化策略 (轮数: {round_num})...")
             
             # 获取当前文件所在目录的绝对路径
             current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -676,7 +684,7 @@ class GeneratedStrategy(Strategy):
             
             # 验证优化后的策略代码
             if not self.generator.validate_strategy_code(optimized_code):
-                self._log("优化后的策略代码验证失败")
+                error("优化后的策略代码验证失败")
                 return None, None
             
             # 保存优化分析和代码
@@ -700,11 +708,11 @@ class GeneratedStrategy(Strategy):
                 'dir': optimize_dir
             })
             
-            self._log("策略优化完成")
+            info("策略优化完成")
             return optimized_code, optimization_analysis
             
         except Exception as e:
-            self._log(f"策略优化失败: {e}")
+            error(f"策略优化失败: {e}")
             return None, None
     
     def run_optimization_cycle(self, max_rounds: int = None) -> bool:
@@ -720,7 +728,7 @@ class GeneratedStrategy(Strategy):
         try:
             rounds = max_rounds or self.config['max_optimization_rounds']
             
-            self._log(f"开始优化循环，共 {rounds} 轮")
+            info(f"开始优化循环，共 {rounds} 轮")
             
             # 第一轮：回测初始策略
             backtest_result = self.backtest_strategy(round_num=0)
@@ -733,7 +741,7 @@ class GeneratedStrategy(Strategy):
             
             # 进行多轮优化
             for i in range(1, rounds + 1):
-                self._log(f"===== 优化轮次 {i}/{rounds} =====")
+                info(f"===== 优化轮次 {i}/{rounds} =====")
                 
                 # 优化策略
                 optimized_code, _ = self.optimize_strategy(
@@ -742,7 +750,7 @@ class GeneratedStrategy(Strategy):
                 )
                 
                 if not optimized_code:
-                    self._log(f"第 {i} 轮优化失败，跳过")
+                    info(f"第 {i} 轮优化失败，跳过")
                     continue
                 
                 # 回测优化后的策略
@@ -752,7 +760,7 @@ class GeneratedStrategy(Strategy):
                 )
                 
                 if not new_backtest_result:
-                    self._log(f"第 {i} 轮回测失败，跳过")
+                    info(f"第 {i} 轮回测失败，跳过")
                     continue
                 
                 # 比较结果，更新最优结果
@@ -762,9 +770,9 @@ class GeneratedStrategy(Strategy):
                 if current_sharpe > best_sharpe:
                     best_result = new_backtest_result
                     best_code = optimized_code
-                    self._log(f"第 {i} 轮优化成功，夏普比率从 {best_sharpe:.2f} 提升到 {current_sharpe:.2f}")
+                    info(f"第 {i} 轮优化成功，夏普比率从 {best_sharpe:.2f} 提升到 {current_sharpe:.2f}")
                 else:
-                    self._log(f"第 {i} 轮优化未能提高性能，保持当前最优策略")
+                    info(f"第 {i} 轮优化未能提高性能，保持当前最优策略")
                 
                 # 更新回测结果用于下一轮优化
                 backtest_result = new_backtest_result
@@ -778,7 +786,7 @@ class GeneratedStrategy(Strategy):
             with open(final_strategy_file, 'w', encoding='utf-8') as f:
                 f.write(best_code)
             
-            self._log(f"优化循环完成，最优策略已保存到 {final_strategy_file}")
+            info(f"优化循环完成，最优策略已保存到 {final_strategy_file}")
             
             # 生成优化总结报告
             self._generate_optimization_summary()
@@ -786,7 +794,7 @@ class GeneratedStrategy(Strategy):
             return True
             
         except Exception as e:
-            self._log(f"优化循环失败: {e}")
+            error(f"优化循环失败: {e}")
             return False
     
     def _generate_optimization_summary(self):
@@ -861,10 +869,10 @@ class GeneratedStrategy(Strategy):
                     f.write("2. 考虑添加仓位管理和止损策略\n")
                     f.write("3. 监控实盘表现，及时调整参数\n")
             
-            self._log(f"优化总结报告已保存到 {summary_file}")
+            info(f"优化总结报告已保存到 {summary_file}")
             
         except Exception as e:
-            self._log(f"生成优化总结失败: {e}")
+            error(f"生成优化总结失败: {e}")
     
     def run_full_workflow(self) -> bool:
         """
@@ -875,10 +883,10 @@ class GeneratedStrategy(Strategy):
             bool: 工作流是否成功运行
         """
         try:
-            self._log("🚀 开始运行AI交易策略工作流...")
+            info("🚀 开始运行AI交易策略工作流...")
             
             # 打印配置摘要
-            self._log(f"配置摘要: 主数据文件={self.config.get('main_data_file', '未知')}, 额外数据文件={len(self.config.get('additional_data_files', []))}个, 优化轮数={self.config['max_optimization_rounds']}")
+            info(f"配置摘要: 主数据文件={self.config.get('main_data_file', '未知')}, 额外数据文件={len(self.config.get('additional_data_files', []))}个, 优化轮数={self.config['max_optimization_rounds']}")
             
             # 定义工作流步骤映射
             workflow_steps = {
@@ -907,38 +915,39 @@ class GeneratedStrategy(Strategy):
                 steps_to_run = list(workflow_steps.keys())
             
             # 按定义的顺序运行步骤
-            ordered_steps = ['load_data', 'analyze_data', 'generate_initial_strategy', 'run_optimization_cycle']
+            # ordered_steps = ['load_data', 'analyze_data', 'generate_initial_strategy', 'run_optimization_cycle']
+            ordered_steps = ['load_data', 'analyze_data', 'generate_initial_strategy']
             filtered_steps = [step for step in ordered_steps if step in steps_to_run]
             
-            self._log(f"将按以下顺序运行步骤: {', '.join(filtered_steps)}")
+            info(f"将按以下顺序运行步骤: {', '.join(filtered_steps)}")
             
             # 执行每个步骤
             for step_name in filtered_steps:
                 step_info = workflow_steps.get(step_name)
                 if not step_info:
-                    self._log(f"警告: 未知步骤 '{step_name}'，跳过")
+                    warning(f"警告: 未知步骤 '{step_name}'，跳过")
                     continue
                 
-                self._log(f"\n📊 开始 {step_info['description']}...")
+                info(f"\n📊 开始 {step_info['description']}...")
                 start_time = time.time()
                 
                 try:
                     success = step_info['method']()
                     
                     if not success:
-                        self._log(f"❌ {step_info['description']}失败")
+                        error(f"❌ {step_info['description']}失败")
                         # 如果步骤失败，是否继续取决于配置
                         if self.config.get('continue_on_failure', False):
-                            self._log("配置允许继续执行，将尝试运行下一个步骤")
+                            info("配置允许继续执行，将尝试运行下一个步骤")
                         else:
                             return False
                     else:
                         duration = time.time() - start_time
-                        self._log(f"✅ {step_info['description']}成功完成 (耗时: {duration:.2f}秒)")
+                        info(f"✅ {step_info['description']}成功完成 (耗时: {duration:.2f}秒)")
                 except Exception as e:
-                    self._log(f"❌ {step_info['description']}执行异常: {e}")
+                    error(f"❌ {step_info['description']}执行异常: {e}")
                     import traceback
-                    self._log(f"错误详情: {traceback.format_exc()}")
+                    error(f"错误详情: {traceback.format_exc()}")
                     if not self.config.get('continue_on_failure', False):
                         return False
             
@@ -946,14 +955,14 @@ class GeneratedStrategy(Strategy):
             if 'run_optimization_cycle' in filtered_steps:
                 self._generate_optimization_summary()
             
-            self._log("🎉 AI交易策略工作流运行完成！")
-            self._log(f"所有结果已保存到: {self.output_dir}")
+            info("🎉 AI交易策略工作流运行完成！")
+            info(f"所有结果已保存到: {self.output_dir}")
             return True
             
         except Exception as e:
-            self._log(f"工作流运行失败: {e}")
+            error(f"工作流运行失败: {e}")
             import traceback
-            self._log(f"错误详情: {traceback.format_exc()}")
+            error(f"错误详情: {traceback.format_exc()}")
             return False
 
 def main():
