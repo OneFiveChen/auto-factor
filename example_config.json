@@ -10,12 +10,8 @@
     "use_reasoning": true,
     "output_dir": "output_test_logger",
     "run_all_steps": true,
-    "steps_to_run": ["load_data", "analyze_data", "generate_initial_strategy"],
+    "steps_to_run": ["load_data", "analyze_data", "generate_initial_strategy", "run_optimization_cycle"],
     "continue_on_failure": false,
-    "use_volatility_sampling": false,
-    "volatility_sampling_target_samples": 500,
-    "volatility_sampling_min_samples": 300,
-    "volatility_sampling_max_samples": 700,
-    "volatility_sampling_window": 14,
-    "sampling_strategy": "volatility"
+    "sampling_strategy": "volatility",
+    "sampling_params": {}
 }

@@ -11,46 +11,92 @@ class AIStrategyGenerator:
     AI策略生成器，用于与DeepSeek API交互，分析数据并生成交易策略代码
     """
     
-    def __init__(self, api_key: Optional[str] = None, use_reasoning: bool = True,
-                 use_volatility_sampling: bool = True, target_samples: int = 30,
-                 sampling_strategy: str = 'volatility', volatility_window: int = 20):
+    def __init__(self, api_key: Optional[str] = None, use_reasoning: bool = True):
         """
         初始化AI策略生成器
         
         Args:
             api_key: DeepSeek API密钥
             use_reasoning: 是否使用思考模式
-            use_volatility_sampling: 是否使用基于波动率的采样
-            target_samples: 目标采样点数
-            sampling_strategy: 采样策略
-            volatility_window: 波动率计算窗口
         """
         self.client = DeepSeekClient(api_key=api_key, use_reasoning=use_reasoning)
         self.use_reasoning = use_reasoning
-        self.use_volatility_sampling = use_volatility_sampling
-        self.target_samples = target_samples
-        self.sampling_strategy = sampling_strategy
-        self.volatility_window = volatility_window
-        self.sampler = DataSampler(config={'volatility_window': volatility_window})
+        # 设置默认采样参数
+        self.default_sampling_params = {
+            'target_samples': 500,
+            'max_samples': 1000,  # 严格控制最大样本数
+            'volatility_window': 20
+        }
+        # 使用默认参数初始化采样器
+        self.sampler = DataSampler(config={'volatility_window': self.default_sampling_params['volatility_window']})
         # 初始化对话历史，用于多轮对话，设置系统提示
         self.client.start_conversation("""
         你是一位专业的量化交易和数据分析专家，精通金融市场分析、统计建模和算法开发。
         请提供专业、深入且实用的分析和建议。
         """)
     
+    def _sample_data(self, data: pd.DataFrame, strategy: str, params: Dict[str, Any]) -> Tuple[pd.DataFrame, str]:
+        """
+        模块化的数据采样方法，支持多种采样策略和自定义参数
+        
+        Args:
+            data: 要采样的原始数据
+            strategy: 采样策略名称
+            params: 采样参数字典，支持覆盖默认参数
+            
+        Returns:
+            Tuple[pd.DataFrame, str]: 采样后的数据框和采样信息描述
+        """
+        # 合并默认参数和用户自定义参数
+        merged_params = self.default_sampling_params.copy()
+        merged_params.update(params)
+        
+        # 获取关键参数
+        target_samples = merged_params.get('target_samples', 30)
+        max_samples = merged_params.get('max_samples', 20)
+        volatility_window = merged_params.get('volatility_window', 20)
+        
+        # 限制最大样本数，避免超过token限制
+        actual_max_samples = min(target_samples, max_samples)
+        
+        # 根据不同策略进行采样
+        if strategy == "volatility":
+            # 如果需要，更新采样器的波动率窗口
+            if hasattr(self.sampler, 'config'):
+                self.sampler.config['volatility_window'] = volatility_window
+            sample_df = self.sampler.sample_by_volatility(data, actual_max_samples)
+            sampling_info = f"基于波动率的采样（窗口={volatility_window}，{len(sample_df)}行数据）"
+        elif strategy == "uniform":
+            sample_df = self.sampler.sample_with_strategy(data, "uniform", actual_max_samples)
+            sampling_info = f"均匀采样（{len(sample_df)}行数据）"
+        elif strategy == "first_n":  # 重命名为first_n更清晰
+            sample_df = data.head(actual_max_samples)
+            sampling_info = f"前N行采样（{len(sample_df)}行数据）"
+        elif strategy == "last_n":  # 重命名为last_n更清晰
+            sample_df = data.tail(actual_max_samples)
+            sampling_info = f"后N行采样（{len(sample_df)}行数据）"
+        else:
+            # 默认使用均匀采样
+            sample_df = self.sampler.sample_with_strategy(data, "uniform", actual_max_samples)
+            sampling_info = f"默认均匀采样（{len(sample_df)}行数据）"
+        
+        return sample_df, sampling_info
+    
     def analyze_data(self, data: pd.DataFrame, data_description: str = "",
                     use_volatility_sampling: Optional[bool] = None,
+                    sampling_strategy: str = "volatility",
                     target_samples: Optional[int] = None,
-                    sampling_strategy: str = "volatility") -> str:
+                    sampling_params: Optional[Dict[str, Any]] = None) -> str:
         """
         让AI分析数据，理解市场特性和潜在的交易机会
         
         Args:
             data: 要分析的K线数据
             data_description: 数据的额外描述信息（如资产名称、时间周期等）
-            use_volatility_sampling: 是否使用基于波动率的采样（覆盖实例配置）
-            target_samples: 目标采样点数（覆盖实例配置）
-            sampling_strategy: 采样策略，可选值：'volatility'(基于波动率), 'uniform'(均匀采样), 'head'(取前N个)
+            sampling_strategy: 采样策略，支持'volatility', 'uniform', 'first_n', 'last_n'
+            sampling_params: 采样参数字典，将覆盖默认参数
+            use_volatility_sampling: 向后兼容参数，是否使用基于波动率的采样
+            target_samples: 向后兼容参数，目标采样点数
             
         Returns:
             str: AI的数据分析结果
@@ -58,47 +104,54 @@ class AIStrategyGenerator:
         info("=== 开始数据分析 ===")
         info(f"原始数据总行数: {len(data)}")
         
-        # 确定是否使用波动率采样
-        if use_volatility_sampling is None:
-            use_volatility_sampling = self.use_volatility_sampling
-            
-        info(f"是否使用波动率采样: {use_volatility_sampling}")
+        # 初始化采样参数字典
+        if sampling_params is None:
+            sampling_params = {}
         
-        # 确定目标采样数
-        if target_samples is None:
-            target_samples = self.target_samples
+        # 处理向后兼容性 - use_volatility_sampling参数
+        if use_volatility_sampling is not None:
+            # 如果明确指定了use_volatility_sampling，根据它调整策略
+            if use_volatility_sampling and sampling_strategy != "volatility":
+                info(f"注意: use_volatility_sampling=True，将使用'volatility'策略")
+                sampling_strategy = "volatility"
+            elif not use_volatility_sampling:
+                info(f"注意: use_volatility_sampling=False，将使用'uniform'策略")
+                sampling_strategy = "uniform"
         
-        info(f"目标采样数: {target_samples}")
+        # 处理向后兼容性 - target_samples参数
+        if target_samples is not None:
+            sampling_params['target_samples'] = target_samples
+        
+        # 策略名称映射（向后兼容）
+        strategy_mapping = {
+            'head': 'first_n',
+            'tail': 'last_n'
+        }
+        if sampling_strategy in strategy_mapping:
+            old_strategy = sampling_strategy
+            sampling_strategy = strategy_mapping[sampling_strategy]
+            info(f"注意: 策略'{old_strategy}'已更新为'{sampling_strategy}'")
+        
         info(f"采样策略: {sampling_strategy}")
+        info(f"采样参数: {sampling_params}")
         
-        # 准备数据样本
+        # 使用模块化采样方法
         info("开始数据采样...")
-        # 严格控制数据样本大小，避免超过token限制
-        max_samples = min(target_samples, 1000)  # 限制最大样本数为1000
-        
-        if use_volatility_sampling and sampling_strategy == "volatility":
-            # 使用基于波动率的采样
-            sample_df = self.sampler.sample_by_volatility(data, max_samples)
-            sampling_info = f"基于波动率的采样（{len(sample_df)}行数据）"
-        elif use_volatility_sampling:
-            # 使用指定的采样策略
-            sample_df = self.sampler.sample_with_strategy(data, sampling_strategy, max_samples)
-            sampling_info = f"使用{sampling_strategy}策略采样（{len(sample_df)}行数据）"
-        else:
-            # 使用默认的前N行方式，而不是全量数据
-            sample_df = data.head(max_samples)
-            sampling_info = f"使用前{len(sample_df)}行数据"
+        sample_df, sampling_info = self._sample_data(data, sampling_strategy, sampling_params)
         
         info(f"采样完成！采样数据量: {len(sample_df)}行")
         info(f"采样时间范围: {sample_df.index[0]} 到 {sample_df.index[-1]}")
         info("=== 开始准备AI分析 ===")
         
-        # 只选择关键列的数据，减少数据量
-        key_columns = ['open', 'high', 'low', 'close', 'volume']
-        available_columns = [col for col in key_columns if col in sample_df.columns]
-        sample_df_filtered = sample_df[available_columns]
-        sample_data = sample_df_filtered.to_string()
+        # 获取数据列信息，作为数据处理的额外信息
+        available_columns = list(sample_df.columns)
+        columns_info = f"可用数据列: {', '.join(available_columns)}"
+        info(columns_info)
+        
+        # 获取数据统计摘要
         data_summary = self._get_data_summary(data)
+        
+        sample_data = sample_df.to_string()
         
         # 构建提示词，使用format方法避免f-string空表达式问题
         data_desc_text = data_description if data_description else "暂无数据描述"
@@ -108,10 +161,14 @@ class AIStrategyGenerator:
 ## 数据描述
 {}
 
+## 数据处理信息
+- {}
+- {}
+
 ## 数据统计摘要
 {}
 
-## 数据样本（{}）
+## 数据样本（仅显示前10行）
 {}
 
 ## 任务要求
@@ -123,7 +180,7 @@ class AIStrategyGenerator:
 5. 有哪些风险因素需要注意？
 
 请提供详细、专业且有深度的分析，帮助后续的策略开发。
-""".format(data_desc_text, data_summary, sampling_info, sample_data)
+""".format(data_desc_text, columns_info, sampling_info, data_summary, sample_data)
         
         
         # 使用多轮对话方式调用API
@@ -224,7 +281,7 @@ class GeneratedStrategy(Strategy):
         info("=================初始化策略请求结束，请观察结果================")
         
         # 解析策略代码和说明
-        debug(f"[DEBUG] 大模型初始化策略策略响应: {response}")
+        # debug(f"[DEBUG] 大模型初始化策略策略响应: {response}")
         strategy_code, strategy_description = self._parse_strategy_response(response)
         
         return strategy_code, strategy_description
@@ -245,7 +302,7 @@ class GeneratedStrategy(Strategy):
         """
         # 转义回测结果中的花括号，避免被format方法错误解释
         escaped_backtest_results = backtest_results.replace('{', '{{').replace('}', '}}')
-        debug(f"优化策略 - 转义后的回测结果: {escaped_backtest_results[:2000]}...")
+        # debug(f"优化策略 - 转义后的回测结果: {escaped_backtest_results[:2000]}...")
         
         # 构建简洁的提示词，利用多轮对话特性，不需要重复发送已提供的信息
         prompt = """
@@ -479,8 +536,26 @@ class GeneratedStrategy(Strategy):
 
 """.format(strategy_name, processed_description)
         
+        # 修正导入语句，使用正确的路径
+        corrected_code = re.sub(r'from\s+backtester\s+import\s+Strategy', 
+                               'from src.core.backtester import Strategy', 
+                               code)
+        
+        # 添加路径设置代码到文件开头
+        path_setup = """import sys
+import os
+# 添加项目根目录和src目录到Python路径
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src'))
+
+"""
+        
+        # 检查是否已经有sys导入
+        if not re.search(r'^\s*import\s+sys', corrected_code, re.MULTILINE):
+            corrected_code = path_setup + corrected_code
+        
         with open(filename, 'w', encoding='utf-8') as f:
-            f.write(header + code)
+            f.write(header + corrected_code)
         
         info(f"策略已保存到 {filename}")
 

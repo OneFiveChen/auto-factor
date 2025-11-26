@@ -47,12 +47,9 @@ class AITradingWorkflow:
             'data_directory': '',  # 数据文件目录
             'run_all_steps': True,  # 是否运行所有步骤
             'steps_to_run': ['load_data', 'analyze_data', 'generate_initial_strategy', 'run_optimization_cycle'],  # 要运行的步骤列表
-            # 波动率采样配置
-            'use_volatility_sampling': True,  # 是否使用波动率采样
-            'volatility_sampling_target_samples': 50,  # 目标采样数量
-            'volatility_sampling_strategy': 'dynamic',  # 采样策略: 'dynamic', 'importance', 'hybrid'
-            'volatility_window': 20,  # 波动率计算窗口大小
-            'volatility_threshold': 0.02  # 波动率阈值，用于重要性采样
+            # 采样配置
+            'sampling_strategy': 'volatility',  # 采样策略: 'volatility', 'uniform', 'first_n', 'last_n'
+            'sampling_params': {}  # 采样参数字典
         }
         
         # 合并配置
@@ -103,11 +100,7 @@ class AITradingWorkflow:
         self.reader = DataReader(data_dir=self.config.get('data_directory', ''))
         self.generator = AIStrategyGenerator(
             api_key=self.config['api_key'],
-            use_reasoning=self.config['use_reasoning'],
-            use_volatility_sampling=self.config['use_volatility_sampling'],
-            target_samples=self.config['volatility_sampling_target_samples'],
-            sampling_strategy=self.config['volatility_sampling_strategy'],
-            volatility_window=self.config['volatility_window']
+            use_reasoning=self.config['use_reasoning']
         )
         
         # 记录日志
@@ -312,22 +305,16 @@ class AITradingWorkflow:
             # 首先进行单一数据集分析（使用默认回测数据集）
             info("=== AI交易工作流 - 数据分析阶段 ===")
             info(f"配置信息:")
-            info(f"  - 是否使用波动率采样: {self.config.get('use_volatility_sampling', True)}")
-            if self.config.get('use_volatility_sampling', True):
-                info(f"  - 目标采样数量: {self.config.get('volatility_sampling_target_samples', 50)}")
-                info(f"  - 最小采样数量: {self.config.get('volatility_sampling_min_samples', 30)}")
-                info(f"  - 最大采样数量: {self.config.get('volatility_sampling_max_samples', 100)}")
-                info(f"  - 波动率计算窗口: {self.config.get('volatility_sampling_window', 14)}")
-                info(f"  - 采样策略: {self.config.get('sampling_strategy', 'volatility')}")
+            info(f"  - 采样策略: {self.config.get('sampling_strategy', 'volatility')}")
+            info(f"  - 采样参数: {self.config.get('sampling_params', {})}")
             
             info("\n开始使用AI分析默认数据集...")
             try:
                 self.analysis_result = self.generator.analyze_data(
                     self.data,
                     self.config['main_data_description'],
-                    use_volatility_sampling=self.config.get('use_volatility_sampling', True),
-                    target_samples=self.config.get('volatility_sampling_target_samples', 50),
-                    sampling_strategy=self.config.get('sampling_strategy', 'volatility')
+                    sampling_strategy=self.config.get('sampling_strategy', 'volatility'),
+                    sampling_params=self.config.get('sampling_params', {})
                 )
                 info("数据分析完成!")
             except Exception as e:
