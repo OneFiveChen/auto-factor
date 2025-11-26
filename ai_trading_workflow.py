@@ -85,7 +85,7 @@ class AITradingWorkflow:
         self._load_api_key()
         
         # 5. 验证必需的配置项
-        self._validate_config()
+        # self._validate_config()
         
         # 6. 标准化配置项
         self._normalize_config()

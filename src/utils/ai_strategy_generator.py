@@ -32,6 +32,11 @@ class AIStrategyGenerator:
         self.sampling_strategy = sampling_strategy
         self.volatility_window = volatility_window
         self.sampler = DataSampler(config={'volatility_window': volatility_window})
+        # 初始化对话历史，用于多轮对话，设置系统提示
+        self.client.start_conversation("""
+        你是一位专业的量化交易和数据分析专家，精通金融市场分析、统计建模和算法开发。
+        请提供专业、深入且实用的分析和建议。
+        """)
     
     def send_prompt(self, prompt: str) -> str:
         """
@@ -49,10 +54,9 @@ class AIStrategyGenerator:
         请提供专业、深入且实用的分析和建议。
         """
         
-        # 调用API
-        response = self.client.send_message(
+        # 使用多轮对话方式调用API
+        response = self.client.send_message_round(
             prompt=prompt,
-            system_prompt=system_prompt,
             use_reasoning=self.use_reasoning,
             stream=True
         )
@@ -146,10 +150,9 @@ class AIStrategyGenerator:
 请基于提供的数据，给出客观、专业、深入的分析，避免过度简化或不切实际的结论。
 """
         
-        # 调用API
-        response = self.client.send_message(
+        # 使用多轮对话方式调用API
+        response = self.client.send_message_round(
             prompt=prompt,
-            system_prompt=system_prompt,
             use_reasoning=self.use_reasoning,
             stream=True  # 启用流式输出，提高用户体验
         )
@@ -305,10 +308,9 @@ class GeneratedStrategy(Strategy):
 生成的代码必须严格遵循要求的格式，可以直接运行，并且策略逻辑必须清晰且有理论依据。
 """
         info("=================初始化策略请求，请观察================")
-        # 调用API
-        response = self.client.send_message(
+        # 使用多轮对话方式调用API
+        response = self.client.send_message_round(
             prompt=prompt,
-            system_prompt=system_prompt,
             use_reasoning=self.use_reasoning,
             stream=True
         )
@@ -406,10 +408,9 @@ class GeneratedStrategy(Strategy):
 优化应该有理有据，基于数据和交易理论，避免随意更改参数。
 """
         
-        # 调用API
-        response = self.client.send_message(
+        # 使用多轮对话方式调用API
+        response = self.client.send_message_round(
             prompt=prompt,
-            system_prompt=system_prompt,
             use_reasoning=self.use_reasoning,
             stream=True
         )

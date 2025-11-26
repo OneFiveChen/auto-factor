@@ -6,7 +6,7 @@ from typing import List, Dict, Optional, Any
 class DeepSeekClient:
     """
     DeepSeek大模型API客户端
-    提供简单的接口来调用DeepSeek聊天模型
+    提供简单的接口来调用DeepSeek聊天模型，支持多轮对话
     """
     
     def __init__(self, api_key: Optional[str] = None, api_url: str = "https://api.deepseek.com/chat/completions", use_reasoning: bool = False):
@@ -23,7 +23,7 @@ class DeepSeekClient:
         if not self.api_key:
             # 尝试从api_key.json文件读取，使用绝对路径
             try:
-                api_key_path = '/Users/chenjiali/workplace/aitrade/api_key.json'
+                api_key_path = '/Users/chenjiali/workplace/aitrade/config/api_key.json'
                 with open(api_key_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                     # 支持多种可能的键名
@@ -40,6 +40,9 @@ class DeepSeekClient:
             "Authorization": f"Bearer {self.api_key}"
         }
         self.use_reasoning = use_reasoning  # 保存默认的思考模式设置
+        # 初始化对话历史，用于多轮对话
+        self.conversation_history: List[Dict[str, str]] = []
+        self.system_prompt: Optional[str] = None
     
     def chat_completion(self, 
                        messages: List[Dict[str, str]],
@@ -172,6 +175,93 @@ class DeepSeekClient:
             return response["choices"][0]["message"]["content"]
         else:
             raise ValueError(f"API响应格式异常: {response}")
+    
+    def start_conversation(self, system_prompt: str = "You are a helpful assistant.") -> None:
+        """
+        开始新的多轮对话
+        
+        Args:
+            system_prompt: 系统提示信息
+        """
+        # 重置对话历史
+        self.reset_conversation()
+        # 设置系统提示
+        self.system_prompt = system_prompt
+        # 将系统提示添加到对话历史中
+        self.conversation_history.append({"role": "system", "content": system_prompt})
+    
+    def send_message_round(self, prompt: str, use_reasoning: Optional[bool] = None, **kwargs) -> str:
+        """
+        发送多轮对话中的一轮消息并获取回复
+        自动维护对话历史，上下文在库代码中处理
+        
+        Args:
+            prompt: 用户提问内容
+            use_reasoning: 是否使用思考模式
+            **kwargs: 其他可选参数
+            
+        Returns:
+            模型回复内容
+        """
+        # 如果对话历史为空，初始化系统提示
+        if not self.conversation_history:
+            self.start_conversation()
+        
+        # 添加用户消息到对话历史
+        self.conversation_history.append({"role": "user", "content": prompt})
+        
+        # 调用API，传递use_reasoning参数
+        response = self.chat_completion(self.conversation_history, use_reasoning=use_reasoning, **kwargs)
+        
+        # 提取回复内容
+        if "choices" in response and len(response["choices"]) > 0:
+            assistant_response = response["choices"][0]["message"]["content"]
+            # 将助手回复添加到对话历史
+            self.conversation_history.append({"role": "assistant", "content": assistant_response})
+            return assistant_response
+        else:
+            raise ValueError(f"API响应格式异常: {response}")
+    
+    def reset_conversation(self) -> None:
+        """
+        重置对话历史
+        """
+        self.conversation_history = []
+        self.system_prompt = None
+    
+    def get_conversation_history(self) -> List[Dict[str, str]]:
+        """
+        获取当前对话历史
+        
+        Returns:
+            对话历史列表
+        """
+        return self.conversation_history.copy()
+    
+    def save_conversation(self, file_path: str) -> None:
+        """
+        保存对话历史到文件
+        
+        Args:
+            file_path: 保存的文件路径
+        """
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                "system_prompt": self.system_prompt,
+                "conversation_history": self.conversation_history
+            }, f, ensure_ascii=False, indent=2)
+    
+    def load_conversation(self, file_path: str) -> None:
+        """
+        从文件加载对话历史
+        
+        Args:
+            file_path: 对话历史文件路径
+        """
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            self.system_prompt = data.get("system_prompt")
+            self.conversation_history = data.get("conversation_history", [])
 
 
 def main():
@@ -182,9 +272,33 @@ def main():
         # 创建客户端实例
         client = DeepSeekClient()
         
-        # 发送消息并获取回复
-        response = client.send_message("Hello!")
+        # 单轮对话示例
+        print("=== 单轮对话示例 ===")
+        response = client.send_message("你好，介绍一下自己")
         print(f"模型回复: {response}")
+        
+        # 多轮对话示例
+        print("\n=== 多轮对话示例 ===")
+        # 开始对话
+        client.start_conversation("你是一个专业的股票分析师")
+        
+        # 第一轮对话
+        response1 = client.send_message_round("解释一下什么是市盈率")
+        print(f"用户: 解释一下什么是市盈率")
+        print(f"模型: {response1}")
+        
+        # 第二轮对话，上下文自动包含在库中
+        response2 = client.send_message_round("它和市净率有什么区别")
+        print(f"用户: 它和市净率有什么区别")
+        print(f"模型: {response2}")
+        
+        # 重置对话并开始新对话
+        print("\n=== 重置对话后 ===")
+        client.reset_conversation()
+        client.start_conversation("你是一个代码助手")
+        response3 = client.send_message_round("如何在Python中实现多线程")
+        print(f"用户: 如何在Python中实现多线程")
+        print(f"模型: {response3}")
         
     except Exception as e:
         print(f"错误: {e}")
