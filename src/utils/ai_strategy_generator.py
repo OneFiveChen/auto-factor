@@ -336,7 +336,7 @@ class GeneratedStrategy(Strategy):
 """.format(backtest_results=escaped_backtest_results)
         
         debug(f"[DEBUG] 优化策略 - 生成的提示词长度: {len(prompt)} 字符")
-        debug(f"[DEBUG] 优化策略 - 提示词前100个字符: {prompt[:2000]}...")
+        # debug(f"[DEBUG] 优化策略 - 提示词前100个字符: {prompt[:2000]}...")
         
         # 系统提示词
         system_prompt = """

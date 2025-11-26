@@ -266,22 +266,25 @@ class Backtest:
             total_trades=metrics['total_trades'],
             win_rate=metrics['win_rate'],
             profit_factor=metrics['profit_factor'],
-            trade_details=self._format_trade_details(),
+            trade_details=self._format_trade_details(max_trades=100),
             key_trades=self._analyze_key_trades()
         )
         
         return summary
     
-    def _format_trade_details(self) -> str:
+    def _format_trade_details(self, max_trades: int = 100) -> str:
         """
         格式化交易明细
+        
+        Args:
+            max_trades: 最大显示的交易数量，默认为100笔
         """
         if not self.trades:
             return "无交易记录"
         
         details = "日期,类型,价格,数量,利润\n"
-        # 只显示最近的10笔交易
-        for trade in self.trades[-10:]:
+        # 显示最近的交易记录，最多max_trades笔
+        for trade in self.trades[-max_trades:]:
             timestamp = trade['timestamp'].strftime('%Y-%m-%d') if hasattr(trade['timestamp'], 'strftime') else str(trade['timestamp'])
             trade_type = trade['type']
             price = trade['price']
