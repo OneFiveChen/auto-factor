@@ -313,11 +313,12 @@ class AITradingWorkflow:
             info("=== AI交易工作流 - 数据分析阶段 ===")
             info(f"配置信息:")
             info(f"  - 是否使用波动率采样: {self.config.get('use_volatility_sampling', True)}")
-            info(f"  - 目标采样数量: {self.config.get('volatility_sampling_target_samples', 50)}")
-            info(f"  - 最小采样数量: {self.config.get('volatility_sampling_min_samples', 30)}")
-            info(f"  - 最大采样数量: {self.config.get('volatility_sampling_max_samples', 100)}")
-            info(f"  - 波动率计算窗口: {self.config.get('volatility_sampling_window', 14)}")
-            info(f"  - 采样策略: {self.config.get('sampling_strategy', 'volatility')}")
+            if self.config.get('use_volatility_sampling', True):
+                info(f"  - 目标采样数量: {self.config.get('volatility_sampling_target_samples', 50)}")
+                info(f"  - 最小采样数量: {self.config.get('volatility_sampling_min_samples', 30)}")
+                info(f"  - 最大采样数量: {self.config.get('volatility_sampling_max_samples', 100)}")
+                info(f"  - 波动率计算窗口: {self.config.get('volatility_sampling_window', 14)}")
+                info(f"  - 采样策略: {self.config.get('sampling_strategy', 'volatility')}")
             
             info("\n开始使用AI分析默认数据集...")
             try:
@@ -915,8 +916,8 @@ class GeneratedStrategy(Strategy):
                 steps_to_run = list(workflow_steps.keys())
             
             # 按定义的顺序运行步骤
-            # ordered_steps = ['load_data', 'analyze_data', 'generate_initial_strategy', 'run_optimization_cycle']
-            ordered_steps = ['load_data', 'analyze_data', 'generate_initial_strategy']
+            ordered_steps = ['load_data', 'analyze_data', 'generate_initial_strategy', 'run_optimization_cycle']
+            # ordered_steps = ['load_data', 'analyze_data', 'generate_initial_strategy']
             filtered_steps = [step for step in ordered_steps if step in steps_to_run]
             
             info(f"将按以下顺序运行步骤: {', '.join(filtered_steps)}")

@@ -38,31 +38,6 @@ class AIStrategyGenerator:
         请提供专业、深入且实用的分析和建议。
         """)
     
-    def send_prompt(self, prompt: str) -> str:
-        """
-        直接发送提示词给AI并获取回复
-        
-        Args:
-            prompt: 要发送的提示词
-            
-        Returns:
-            str: AI的回复内容
-        """
-        # 默认系统提示词
-        system_prompt = """
-        你是一位专业的量化交易和数据分析专家，精通金融市场分析、统计建模和算法开发。
-        请提供专业、深入且实用的分析和建议。
-        """
-        
-        # 使用多轮对话方式调用API
-        response = self.client.send_message_round(
-            prompt=prompt,
-            use_reasoning=self.use_reasoning,
-            stream=True
-        )
-        
-        return response
-    
     def analyze_data(self, data: pd.DataFrame, data_description: str = "",
                     use_volatility_sampling: Optional[bool] = None,
                     target_samples: Optional[int] = None,
@@ -98,24 +73,31 @@ class AIStrategyGenerator:
         
         # 准备数据样本
         info("开始数据采样...")
+        # 严格控制数据样本大小，避免超过token限制
+        max_samples = min(target_samples, 1000)  # 限制最大样本数为1000
+        
         if use_volatility_sampling and sampling_strategy == "volatility":
             # 使用基于波动率的采样
-            sample_df = self.sampler.sample_by_volatility(data, target_samples)
+            sample_df = self.sampler.sample_by_volatility(data, max_samples)
             sampling_info = f"基于波动率的采样（{len(sample_df)}行数据）"
         elif use_volatility_sampling:
             # 使用指定的采样策略
-            sample_df = self.sampler.sample_with_strategy(data, sampling_strategy, target_samples)
+            sample_df = self.sampler.sample_with_strategy(data, sampling_strategy, max_samples)
             sampling_info = f"使用{sampling_strategy}策略采样（{len(sample_df)}行数据）"
         else:
-            # 使用默认的head方式
-            sample_df = data.head(target_samples)
+            # 使用默认的前N行方式，而不是全量数据
+            sample_df = data.head(max_samples)
             sampling_info = f"使用前{len(sample_df)}行数据"
         
         info(f"采样完成！采样数据量: {len(sample_df)}行")
         info(f"采样时间范围: {sample_df.index[0]} 到 {sample_df.index[-1]}")
         info("=== 开始准备AI分析 ===")
         
-        sample_data = sample_df.to_string()
+        # 只选择关键列的数据，减少数据量
+        key_columns = ['open', 'high', 'low', 'close', 'volume']
+        available_columns = [col for col in key_columns if col in sample_df.columns]
+        sample_df_filtered = sample_df[available_columns]
+        sample_data = sample_df_filtered.to_string()
         data_summary = self._get_data_summary(data)
         
         # 构建提示词，使用format方法避免f-string空表达式问题
@@ -143,12 +125,6 @@ class AIStrategyGenerator:
 请提供详细、专业且有深度的分析，帮助后续的策略开发。
 """.format(data_desc_text, data_summary, sampling_info, sample_data)
         
-        # 系统提示词
-        system_prompt = """
-你是一位专业的量化交易分析师和策略研究员，精通金融市场、技术分析和量化交易算法。
-你拥有丰富的交易经验和深厚的统计知识，能够从数据中发现有价值的模式和规律。
-请基于提供的数据，给出客观、专业、深入的分析，避免过度简化或不切实际的结论。
-"""
         
         # 使用多轮对话方式调用API
         response = self.client.send_message_round(
@@ -185,55 +161,12 @@ class AIStrategyGenerator:
                                               target_samples=target_samples,
                                               sampling_strategy=sampling_strategy)
         
-        # 确定是否使用波动率采样
-        if use_volatility_sampling is None:
-            use_volatility_sampling = self.use_volatility_sampling
-            
-        # 确定目标采样数
-        if target_samples is None:
-            target_samples = self.target_samples
-        
-        # 准备数据样本和统计信息
-        if use_volatility_sampling:
-            # 使用基于波动率的采样
-            sample_df = self.sampler.sample_with_strategy(data, sampling_strategy, min(target_samples, 20))
-            sample_data = sample_df.to_string()
-        else:
-            # 使用默认的head方式
-            sample_data = data.head(10).to_string()
-        
-        data_summary = self._get_data_summary(data)
-        
-        # 构建提示词，使用format方法避免f-string空表达式问题
-        data_desc_text = data_description if data_description else "暂无数据描述"
-        # 对所有参数进行花括号转义，避免被format方法错误解释
-        escaped_data_desc = data_desc_text.replace('{', '{{').replace('}', '}}')
-        debug(f"[DEBUG] 转义后的数据描述: {escaped_data_desc}")
-        escaped_data_summary = data_summary.replace('{', '{{').replace('}', '}}')
-        debug(f"[DEBUG] 转义后的数据摘要: {escaped_data_summary}")
-        # escaped_sample_data = sample_data.replace('{', '{{').replace('}', '}}')
-        # print(f"[DEBUG] 转义后的样本数据: {escaped_sample_data[:100]}...")  # 只打印前100个字符
-        escaped_analysis_result = analysis_result.replace('{', '{{').replace('}', '}}')
-        debug(f"[DEBUG] 转义后的分析结果: {escaped_analysis_result[:100]}...")  # 只打印前100个字符
-        
         info("=================初始化策略请求prompt，请观察================")
-        # 构建提示词，使用命名参数避免位置参数错误
+        # 构建简洁的提示词，使用多轮对话特性，不需要重复发送已提供的数据信息
         prompt = """
 # 策略生成任务
 
-## 数据描述
-{data_desc}
-
-## 数据统计摘要
-{data_sum}
-
-## 数据样本请参考之前给你发送的数据
-
-## 数据分析结果
-{analysis}
-
-## 任务要求
-请基于上述数据和分析，设计一个交易策略，并按照以下格式返回：
+基于我们之前讨论的数据和分析，请设计一个交易策略，并按照以下格式返回：
 
 ### 策略说明
 [在这里详细描述你的策略逻辑、参数选择理由和预期表现]
@@ -259,26 +192,12 @@ class GeneratedStrategy(Strategy):
     
     def initialize(self, data):
         # 在初始化方法中计算所需的技术指标或特征
-        # 例如：
-        # self.sma_fast = data['close'].rolling(window=20).mean()
-        # self.sma_slow = data['close'].rolling(window=50).mean()
         pass
     
     def on_bar(self, index, row, data):
         # 在这里实现策略逻辑
         # 返回 'BUY', 'SELL' 或空字符串 ''（无操作）
         # 确保在返回信号前有足够的数据点进行计算
-        # 例如：
-        # if index < 50:  # 确保有足够的数据点
-        #     return ''
-        # 
-        # if self.sma_fast.iloc[index] > self.sma_slow.iloc[index] and \
-        #    self.sma_fast.iloc[index-1] <= self.sma_slow.iloc[index-1]:
-        #     return 'BUY'
-        # elif self.sma_fast.iloc[index] < self.sma_slow.iloc[index] and \
-        #      self.sma_fast.iloc[index-1] >= self.sma_slow.iloc[index-1]:
-        #     return 'SELL'
-        # return ''
         pass
 ```
 
@@ -292,21 +211,9 @@ class GeneratedStrategy(Strategy):
 7. 考虑风险控制机制
 
 请输出完整的策略代码和详细的策略说明。
-""".format(
-            data_desc=escaped_data_desc,
-            data_sum=escaped_data_summary,
-            # sample=escaped_sample_data,
-            analysis=escaped_analysis_result
-        )
+"""
         
         debug(f"[DEBUG] 生成的提示词长度: {len(prompt)} 字符")
-        debug(f"[DEBUG] 提示词前100个字符: {prompt}")
-        # 系统提示词
-        system_prompt = """
-你是一位专业的量化交易策略专家，精通Python编程和技术分析。
-请根据提供的数据和分析，设计一个合理、可实现且有潜力的交易策略。
-生成的代码必须严格遵循要求的格式，可以直接运行，并且策略逻辑必须清晰且有理论依据。
-"""
         info("=================初始化策略请求，请观察================")
         # 使用多轮对话方式调用API
         response = self.client.send_message_round(
@@ -336,41 +243,19 @@ class GeneratedStrategy(Strategy):
         Returns:
             Tuple[str, str]: (优化后的策略代码, 优化说明)
         """
-        # 构建提示词，使用format方法避免f-string空表达式问题
-        data_desc_text = data_description if data_description else "暂无数据描述"
-        # 转义所有参数中的花括号，避免被format方法错误解释
-        escaped_data_desc = data_desc_text.replace('{', '{{').replace('}', '}}')
-        debug(f"优化策略 - 转义后的数据描述: {escaped_data_desc}")
-        
-        escaped_strategy_desc = strategy_description.replace('{', '{{').replace('}', '}}')
-        debug(f"优化策略 - 转义后的策略说明: {escaped_strategy_desc[:2000]}...")
-        
-        escaped_strategy_code = strategy_code.replace('{', '{{').replace('}', '}}')
-        debug(f"优化策略 - 转义后的策略代码长度: {len(escaped_strategy_code)} 字符")
-        
+        # 转义回测结果中的花括号，避免被format方法错误解释
         escaped_backtest_results = backtest_results.replace('{', '{{').replace('}', '}}')
         debug(f"优化策略 - 转义后的回测结果: {escaped_backtest_results[:2000]}...")
         
-        # 构建提示词，使用命名参数避免位置参数错误
+        # 构建简洁的提示词，利用多轮对话特性，不需要重复发送已提供的信息
         prompt = """
 # 策略优化任务
-
-## 数据描述
-{data_desc}
-
-## 当前策略说明
-{strategy_desc}
-
-## 当前策略代码
-```python
-{strategy_code}
-```
 
 ## 回测结果
 {backtest_results}
 
 ## 任务要求
-请分析回测结果，找出当前策略的优缺点，并提出改进方案。然后根据这些改进，生成优化后的策略代码。
+请分析上述回测结果，找出当前策略的优缺点，并提出改进方案。然后根据这些改进，生成优化后的策略代码。
 
 请按照以下格式返回：
 
@@ -391,12 +276,7 @@ class GeneratedStrategy(Strategy):
 5. 确保优化后的代码可以直接运行
 
 请输出优化分析和完整的优化后策略代码。
-""".format(
-            data_desc=escaped_data_desc,
-            strategy_desc=escaped_strategy_desc,
-            strategy_code=escaped_strategy_code,
-            backtest_results=escaped_backtest_results
-        )
+""".format(backtest_results=escaped_backtest_results)
         
         debug(f"[DEBUG] 优化策略 - 生成的提示词长度: {len(prompt)} 字符")
         debug(f"[DEBUG] 优化策略 - 提示词前100个字符: {prompt[:2000]}...")
