@@ -6,7 +6,7 @@
     "data_directory": "data",
     "initial_capital": 10000.0,
     "commission_rate": 0.001,
-    "max_optimization_rounds": 1,
+    "max_optimization_rounds": 30,
     "use_reasoning": true,
     "output_dir": "output_test_logger",
     "run_all_steps": true,

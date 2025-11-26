@@ -63,6 +63,9 @@ class AITradingWorkflow:
         self.log_file = os.path.join(self.output_dir, f"workflow_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
         set_global_log_file(self.log_file)
         
+        # 设置对话历史文件路径
+        self.conversation_file = os.path.join(self.output_dir, f"ai_conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+        
         # 1. 从配置文件加载配置（如果提供）
         if config_file:
             file_config = self._load_config_file(config_file)
@@ -105,6 +108,7 @@ class AITradingWorkflow:
         
         # 记录日志
         info("工作流初始化完成")
+        info(f"对话历史将保存到: {self.conversation_file}")
     
     def _load_config_file(self, config_file: str) -> Optional[Dict]:
         """
@@ -862,6 +866,26 @@ class GeneratedStrategy(Strategy):
         except Exception as e:
             error(f"生成优化总结失败: {e}")
     
+    def save_conversation_history(self) -> bool:
+        """
+        保存与大模型的对话历史到输出目录
+        
+        Returns:
+            bool: 是否保存成功
+        """
+        try:
+            if hasattr(self.generator, 'client') and hasattr(self.generator.client, 'save_conversation'):
+                info(f"保存大模型对话历史到: {self.conversation_file}")
+                self.generator.client.save_conversation(self.conversation_file)
+                info("对话历史保存成功")
+                return True
+            else:
+                warning("无法访问对话历史对象，跳过保存")
+                return False
+        except Exception as e:
+            error(f"保存对话历史失败: {e}")
+            return False
+    
     def run_full_workflow(self) -> bool:
         """
         运行完整的AI交易策略工作流
@@ -942,6 +966,9 @@ class GeneratedStrategy(Strategy):
             # 生成最终的优化总结报告
             if 'run_optimization_cycle' in filtered_steps:
                 self._generate_optimization_summary()
+            
+            # 保存对话历史
+            self.save_conversation_history()
             
             info("🎉 AI交易策略工作流运行完成！")
             info(f"所有结果已保存到: {self.output_dir}")
